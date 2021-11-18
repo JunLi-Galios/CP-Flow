@@ -307,7 +307,7 @@ if nblocks == 1 and flow_type == 'cpflow':
     # plotting potential's gradient field
     plt.figure(figsize=(5, 5))
     plt.quiver(f[:, 0].reshape(n, n)[::2, ::2], f[:, 1].reshape(n, n)[::2, ::2],
-               torch.exp(logp_).data.numpy().reshape(n, n)[::2, ::2])
+               torch.exp(logp_).cpu().data.numpy().reshape(n, n)[::2, ::2]) # modified by Jun Li
     plt.axis('off')
     plt.tight_layout()
     savefig(f'{ToyData.__name__}_{nblocks}_{depth}_{k}_grad.png')
@@ -325,7 +325,7 @@ if nblocks == 1 and flow_type == 'cpflow':
     savefig(f'{ToyData.__name__}_{nblocks}_{depth}_{k}_z.png')
 
     plt.figure(figsize=(5, 5))
-    data = data.data.numpy()
+    data = data.cpu().data.numpy() # modified by Jun Li
     fx = data[:, 0].reshape(n, n)
     fy = data[:, 1].reshape(n, n)
     for i in range(n):
@@ -350,7 +350,7 @@ if nblocks == 1 and flow_type == 'cpflow':
     F_inv = fl.get_potential(x_inv)
     cc = (x * x_inv).sum(1, keepdim=True) - F_inv
 
-    f = cc.data.numpy()
+    f = cc.cpu().data.numpy() # modified by Jun Li
     # plotting potential
     plt.figure(figsize=(5, 5))
     plt.contour(f.reshape(n, n), levels=20)
@@ -359,11 +359,11 @@ if nblocks == 1 and flow_type == 'cpflow':
 
     num_samples = 2000
     if num_samples:
-        z = torch.randn(num_samples, 2) * np.exp(0.5 * plogv)
+        z = torch.randn(num_samples, 2).cuda() * np.exp(0.5 * plogv) # modified by Jun Li
         x = fl.reverse(z)
         x = flow.flows[0].reverse(x)
-        x = x.data.numpy()
-        z = z.data.numpy()
+        x = x.cpu().data.numpy() # modified by Jun Li
+        z = z.cpu().data.numpy() # modified by Jun Li
 
         # noinspection PyUnresolvedReferences
         colors = cm.rainbow(np.linspace(0, 1, num_samples))
@@ -396,8 +396,8 @@ if nblocks == 1 and flow_type == 'cpflow':
     if ToyData.__name__ == 'EightGaussian':
         # noinspection PyArgumentList
         x, c = ToyData(1).sample(1000, True)
-        z = flow.forward_transform(x)[0]
-        z = z.data.numpy()
+        z = flow.forward_transform(x.cuda())[0] # modified by Jun Li
+        z = z.cpu().data.numpy() # modified by Jun Li
         # noinspection PyUnresolvedReferences
         colors = cm.jet(np.linspace(0, 1, 8))
         plt.figure(figsize=(5, 5))
@@ -408,7 +408,7 @@ if nblocks == 1 and flow_type == 'cpflow':
         savefig(f'{ToyData.__name__}_{nblocks}_{depth}_{k}_z_encode.png')
 
         plt.figure(figsize=(5, 5))
-        x = x.data.numpy()
+        x = x.cpu().data.numpy() # modified by Jun Li
         for i in range(8):
             plt.scatter(x[c == i, 0], x[c == i, 1], color=colors[i])
         plt.axis('off')
