@@ -70,11 +70,13 @@ class MultiscaleFlow(nn.Module):
                 output_sizes.append((n, c, h, w))
         return tuple(output_sizes)
 
-    def forward(self, x, logdet=0, reverse=False, **kwargs):
+    def forward(self, x, logdet=0, stage=self.n_scale, reverse=False, **kwargs):
         if reverse:
             return self.reverse(x, logdet, **kwargs)
         out = []
         for idx in range(len(self.transforms)):
+            if idx == stage:
+                break
             x, logdet = self.transforms[idx].forward_transform(x, logdet)
 
             if self.factor_out and (idx < len(self.transforms) - 1):
