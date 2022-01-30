@@ -124,11 +124,11 @@ def update_lr(optimizer, itr, args):
         param_group["lr"] = lr
 
 
-def compute_loss(x, model):
+def compute_loss(x, model, stage):
     ndims = np.prod(x.shape[1:])
     nvals = 256  # for MNIST and CIFAR-10.
 
-    z, logdet = model(x, 0)
+    z, logdet = model(x, 0, stage)
 
     # log p(z)
     logpz = standard_normal_logprob(z).view(z.size(0), -1).sum(1)
@@ -459,7 +459,8 @@ def main(rank, world_size, args):
             mprint('Current LR {}'.format(optimizer.param_groups[0]['lr']))
             train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_meter, hnorm_meter, batch_time, ema,
                   device, mprint, world_size, args, stage, c2f=args.c2f)
-            val_time, test_bpd = validate(epoch, model, test_loader, ema, device)
+            if not args.fast_training:
+                val_time, test_bpd = validate(epoch, model, test_loader, ema, device)
             mprint('Epoch: [{0}]\tTime {1:.2f} | Test bits/dim {test_bpd:.4f}'.format(epoch, val_time, test_bpd=test_bpd))
 
             if rank == 0:
@@ -467,16 +468,26 @@ def main(rank, world_size, args):
                 visualize(model, fixed_x, fixed_z, os.path.join(args.save, 'figs', f'{epoch}.png'))
 
                 utils.makedirs(os.path.join(args.save, "models"))
-                if test_bpd < best_test_bpd:
-                    best_test_bpd = test_bpd
+                if not args.fast_training:
+                    if test_bpd < best_test_bpd:
+                        best_test_bpd = test_bpd
+                        torch.save({
+                            'epoch': epoch,
+                            'state_dict': model.module.state_dict(),
+                            'opt_state_dict': optimizer.state_dict(),
+                            'args': args,
+                            'ema': ema,
+                            'test_bpd': test_bpd,
+                        }, os.path.join(args.save, 'models', 'best_model.pth'))
+                else:
                     torch.save({
                         'epoch': epoch,
                         'state_dict': model.module.state_dict(),
                         'opt_state_dict': optimizer.state_dict(),
                         'args': args,
                         'ema': ema,
-                        'test_bpd': test_bpd,
-                    }, os.path.join(args.save, 'models', 'best_model.pth'))
+                    }, os.path.join(args.save, 'models', 'model_{}.pth'.format(epoch)))
+ 
 
             if rank == 0:
                 torch.save({
@@ -522,6 +533,7 @@ if __name__ == "__main__":
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--ema_val', type=eval, choices=[True, False], default=True)
     parser.add_argument("--fast_adjoint", type=eval, choices=[True, False], default=False)
+    parser.add_argument("--fast_training", type=eval, choices=[True, False], default=True)
 
     parser.add_argument('--resume', type=str, default=None)
     parser.add_argument('--ngpus', type=int, default=1)
