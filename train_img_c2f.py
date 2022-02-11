@@ -194,7 +194,7 @@ def visualize(model, x, fixed_z, savepath):
 
 # noinspection PyUnusedLocal,PyShadowingNames
 def train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_meter, hnorm_meter, batch_time, ema, device,
-          mprint, world_size, args):
+          mprint, world_size, args, stage):
     model.train()
 
     end = time.time()
@@ -211,7 +211,7 @@ def train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_mete
         x = x.to(device)
 
         # with torch.autograd.detect_anomaly():
-        bpd = compute_loss(x, model)
+        bpd = compute_loss(x, model, stage)
         bpd_meter.update(bpd.item())
 
         loss = bpd
@@ -255,7 +255,7 @@ def train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_mete
 
 
 # noinspection PyUnusedLocal
-def validate(epoch, model, data_loader, ema, device):
+def validate(epoch, model, data_loader, ema, device, stage):
     """
     Evaluates the cross entropy between p_data and p_model.
     """
@@ -401,6 +401,7 @@ def main(rank, world_size, args):
     # Saving and resuming
     best_test_bpd = math.inf
     begin_epoch = 0
+    begin_stage = 0
 
     most_recent_path = os.path.join(args.save, 'models', 'most_recent.pth')
     checkpt_exists = os.path.exists(most_recent_path)
@@ -414,6 +415,7 @@ def main(rank, world_size, args):
 
         checkpt = torch.load(most_recent_path)
         begin_epoch = checkpt["epoch"] + 1
+        begin_stage = checkpt["stage"]
 
         model.module.load_state_dict(checkpt["state_dict"])
         ema.set(checkpt['ema'])
@@ -428,6 +430,7 @@ def main(rank, world_size, args):
 
         checkpt = torch.load(args.resume)
         begin_epoch = checkpt["epoch"] + 1
+        begin_stage = checkpt["stage"]
 
         model.module.load_state_dict(checkpt["state_dict"])
         ema.set(checkpt['ema'])
@@ -451,17 +454,17 @@ def main(rank, world_size, args):
         # visualize(model, fixed_x, fixed_z, os.path.join(args.save, 'figs', 'init.png'))
         
     n_blocks=list(map(int, args.nblocks.split('-')))
-    for stage in range(len(n_blocks)):
+    for stage in range(begin_stage, len(n_blocks)):
         for epoch in range(begin_epoch, args.nepochs):
             sampler.set_epoch(epoch)
             flows.CG_ITERS_TRACER.clear()
             flows.HESS_NORM_TRACER.clear()
             mprint('Current LR {}'.format(optimizer.param_groups[0]['lr']))
             train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_meter, hnorm_meter, batch_time, ema,
-                  device, mprint, world_size, args, stage, c2f=args.c2f)
+                  device, mprint, world_size, args, stage+1)
             if not args.fast_training:
-                val_time, test_bpd = validate(epoch, model, test_loader, ema, device)
-            mprint('Epoch: [{0}]\tTime {1:.2f} | Test bits/dim {test_bpd:.4f}'.format(epoch, val_time, test_bpd=test_bpd))
+                val_time, test_bpd = validate(epoch, model, test_loader, ema, device, stage+1)
+                mprint('Epoch: [{0}]\tTime {1:.2f} | Test bits/dim {test_bpd:.4f}'.format(epoch, val_time, test_bpd=test_bpd))
 
             if rank == 0:
                 utils.makedirs(os.path.join(args.save, 'figs'))
@@ -473,6 +476,7 @@ def main(rank, world_size, args):
                         best_test_bpd = test_bpd
                         torch.save({
                             'epoch': epoch,
+                            'stage': stage,
                             'state_dict': model.module.state_dict(),
                             'opt_state_dict': optimizer.state_dict(),
                             'args': args,
@@ -480,23 +484,25 @@ def main(rank, world_size, args):
                             'test_bpd': test_bpd,
                         }, os.path.join(args.save, 'models', 'best_model.pth'))
                 else:
-                    torch.save({
-                        'epoch': epoch,
-                        'state_dict': model.module.state_dict(),
-                        'opt_state_dict': optimizer.state_dict(),
-                        'args': args,
-                        'ema': ema,
-                    }, os.path.join(args.save, 'models', 'model_{}.pth'.format(epoch)))
+                    if epoch%5==0:
+                        torch.save({
+                            'epoch': epoch,
+                            'stage': stage,
+                            'state_dict': model.module.state_dict(),
+                            'opt_state_dict': optimizer.state_dict(),
+                            'args': args,
+                            'ema': ema,
+                        }, os.path.join(args.save, 'models', 'model_{}_{}.pth'.format(stage, epoch)))
  
 
             if rank == 0:
                 torch.save({
                     'epoch': epoch,
+                    'stage': stage,
                     'state_dict': model.module.state_dict(),
                     'opt_state_dict': optimizer.state_dict(),
                     'args': args,
                     'ema': ema,
-                    'test_bpd': test_bpd,
                 }, os.path.join(args.save, 'models', 'most_recent.pth'))
 
     cleanup()
