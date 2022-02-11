@@ -75,7 +75,7 @@ class MultiscaleFlow(nn.Module):
             return self.reverse(x, logdet, **kwargs)
         out = []
         for idx in range(len(self.transforms)):
-            if idx == stage:
+            if idx > stage:
                 break
             x, logdet = self.transforms[idx].forward_transform(x, logdet)
 
