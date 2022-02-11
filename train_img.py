@@ -270,7 +270,7 @@ def validate(epoch, model, data_loader, ema, device, stage):
     with torch.no_grad():
         for i, (x, y) in enumerate(tqdm(data_loader)):
             x = x.to(device)
-            bpd = compute_loss(x, model)
+            bpd = compute_loss(x, model, stage)
             bpd_meter.update(bpd.item(), x.size(0))
     val_time = time.time() - start
 
