@@ -255,7 +255,7 @@ def train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_mete
 
 
 # noinspection PyUnusedLocal
-def validate(epoch, model, data_loader, ema, device):
+def validate(epoch, model, data_loader, ema, device, stage):
     """
     Evaluates the cross entropy between p_data and p_model.
     """
@@ -395,6 +395,21 @@ def main(rank, world_size, args):
 
     mprint(model)
     mprint('EMA: {}'.format(ema))
+    
+    if args.test:
+        if args.resume == "":
+            mprint("please specify the resume file")
+            return
+        
+        checkpt = torch.load(os.path.join(args.save, args.resume))
+        model.module.load_state_dict(checkpt["state_dict"])
+        ema.set(checkpt['ema'])
+        val_time, test_bpd = validate(epoch, model, test_loader, ema, device, stage)
+        mprint('checkpt: {0}| \tTime {1:.2f} | Test bits/dim {test_bpd:.4f}'.format(args.resume, val_time, test_bpd=test_bpd))
+         
+        cleanup()
+        return
+        
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.99), weight_decay=args.wd)
 
@@ -457,7 +472,7 @@ def main(rank, world_size, args):
         train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_meter, hnorm_meter, batch_time, ema,
               device, mprint, world_size, args)
         if not args.fast_training:
-            val_time, test_bpd = validate(epoch, model, test_loader, ema, device)
+            val_time, test_bpd = validate(epoch, model, test_loader, ema, device, stage)
             mprint('Epoch: [{0}]\tTime {1:.2f} | Test bits/dim {test_bpd:.4f}'.format(epoch, val_time, test_bpd=test_bpd))
 
         if rank == 0:
@@ -531,6 +546,7 @@ if __name__ == "__main__":
     parser.add_argument("--fast_training", type=eval, choices=[True, False], default=True)
 
     parser.add_argument('--resume', type=str, default=None)
+    parser.add_argument('--test', type=eval, choices=[True, False], default=False)
     parser.add_argument('--ngpus', type=int, default=1)
     parser.add_argument('--port', type=int, default=None)
     parser.add_argument('--logfreq', help='Print progress every so iterations', type=int, default=20)
