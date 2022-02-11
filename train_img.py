@@ -457,6 +457,9 @@ def main(rank, world_size, args):
     hnorm_meter = utils.RunningAverageMeter(0.97)
 
     update_lr(optimizer, 0, args)
+    
+    n_blocks=list(map(int, args.nblocks.split('-')))
+    stage = len(n_blocks)
 
     # for visualization
     fixed_x = next(iter(train_loader))[0][:8].to(device)
