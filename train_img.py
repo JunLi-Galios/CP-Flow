@@ -458,7 +458,7 @@ def main(rank, world_size, args):
               device, mprint, world_size, args)
         if not args.fast_training:
             val_time, test_bpd = validate(epoch, model, test_loader, ema, device)
-        mprint('Epoch: [{0}]\tTime {1:.2f} | Test bits/dim {test_bpd:.4f}'.format(epoch, val_time, test_bpd=test_bpd))
+            mprint('Epoch: [{0}]\tTime {1:.2f} | Test bits/dim {test_bpd:.4f}'.format(epoch, val_time, test_bpd=test_bpd))
 
         if rank == 0:
             utils.makedirs(os.path.join(args.save, 'figs'))
@@ -476,7 +476,8 @@ def main(rank, world_size, args):
                             'ema': ema,
                             'test_bpd': test_bpd,
                         }, os.path.join(args.save, 'models', 'best_model.pth'))
-                else:
+            else:
+                if epoch%5==0:
                     torch.save({
                         'epoch': epoch,
                         'state_dict': model.module.state_dict(),
@@ -492,7 +493,6 @@ def main(rank, world_size, args):
                 'opt_state_dict': optimizer.state_dict(),
                 'args': args,
                 'ema': ema,
-                'test_bpd': test_bpd,
             }, os.path.join(args.save, 'models', 'most_recent.pth'))
 
     cleanup()
