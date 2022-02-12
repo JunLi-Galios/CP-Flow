@@ -194,7 +194,7 @@ def visualize(model, x, fixed_z, savepath):
 
 # noinspection PyUnusedLocal,PyShadowingNames
 def train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_meter, hnorm_meter, batch_time, ema, device,
-          mprint, world_size, args):
+          mprint, world_size, stage, args):
     model.train()
 
     end = time.time()
@@ -477,7 +477,7 @@ def main(rank, world_size, args):
         flows.HESS_NORM_TRACER.clear()
         mprint('Current LR {}'.format(optimizer.param_groups[0]['lr']))
         train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_meter, hnorm_meter, batch_time, ema,
-              device, mprint, world_size, args)
+              device, mprint, world_size, stage, args)
         if not args.fast_training:
             val_time, test_bpd = validate(epoch, model, test_loader, ema, device, stage)
             mprint('Epoch: [{0}]\tTime {1:.2f} | Test bits/dim {test_bpd:.4f}'.format(epoch, val_time, test_bpd=test_bpd))
