@@ -565,6 +565,7 @@ if __name__ == "__main__":
     parser.add_argument("--fast_training", type=eval, choices=[True, False], default=True)
 
     parser.add_argument('--resume', type=str, default=None)
+    parser.add_argument('--test', type=eval, choices=[True, False], default=False)
     parser.add_argument('--ngpus', type=int, default=1)
     parser.add_argument('--port', type=int, default=None)
     parser.add_argument('--logfreq', help='Print progress every so iterations', type=int, default=20)
