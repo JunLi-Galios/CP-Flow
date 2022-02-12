@@ -375,6 +375,9 @@ def main(rank, world_size, args):
     mprint('Creating model.')
 
     input_size = (args.batchsize, im_dim, args.imagesize, args.imagesize)
+    
+    n_blocks=list(map(int, args.nblocks.split('-')))
+    stage = len(n_blocks)
 
     model = MultiscaleFlow(
         input_size,
@@ -395,6 +398,23 @@ def main(rank, world_size, args):
 
     mprint(model)
     mprint('EMA: {}'.format(ema))
+    
+    if args.test:
+        if args.resume == "":
+            mprint("please specify the resume file")
+            return
+        
+        checkpt = torch.load(os.path.join(args.save, 'models', args.resume))
+        model.module.load_state_dict(checkpt["state_dict"])
+        ema.set(checkpt['ema'])
+        epoch = checkpt["epoch"]
+        
+        val_time, test_bpd = validate(epoch, model, test_loader, ema, device, stage)
+        mprint('checkpt: {0}| \tTime {1:.2f} | Test bits/dim {test_bpd:.4f}'.format(args.resume, val_time, test_bpd=test_bpd))
+         
+        cleanup()
+        return
+    
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.99), weight_decay=args.wd)
 
