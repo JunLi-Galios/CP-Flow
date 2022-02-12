@@ -124,11 +124,11 @@ def update_lr(optimizer, itr, args):
         param_group["lr"] = lr
 
 
-def compute_loss(x, model):
+def compute_loss(x, model, stage):
     ndims = np.prod(x.shape[1:])
     nvals = 256  # for MNIST and CIFAR-10.
 
-    z, logdet = model(x, 0)
+    z, logdet = model(x, 0, stage)
 
     # log p(z)
     logpz = standard_normal_logprob(z).view(z.size(0), -1).sum(1)
@@ -375,6 +375,9 @@ def main(rank, world_size, args):
     mprint('Creating model.')
 
     input_size = (args.batchsize, im_dim, args.imagesize, args.imagesize)
+    
+    n_blocks=list(map(int, args.nblocks.split('-')))
+    stage = len(n_blocks)
 
     model = MultiscaleFlow(
         input_size,
@@ -401,9 +404,11 @@ def main(rank, world_size, args):
             mprint("please specify the resume file")
             return
         
-        checkpt = torch.load(os.path.join(args.save, args.resume))
+        checkpt = torch.load(os.path.join(args.save, 'models', args.resume))
         model.module.load_state_dict(checkpt["state_dict"])
         ema.set(checkpt['ema'])
+        epoch = checkpt["epoch"]
+        
         val_time, test_bpd = validate(epoch, model, test_loader, ema, device, stage)
         mprint('checkpt: {0}| \tTime {1:.2f} | Test bits/dim {test_bpd:.4f}'.format(args.resume, val_time, test_bpd=test_bpd))
          
@@ -458,8 +463,7 @@ def main(rank, world_size, args):
 
     update_lr(optimizer, 0, args)
     
-    n_blocks=list(map(int, args.nblocks.split('-')))
-    stage = len(n_blocks)
+    
 
     # for visualization
     fixed_x = next(iter(train_loader))[0][:8].to(device)
