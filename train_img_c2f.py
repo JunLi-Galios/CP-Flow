@@ -377,7 +377,7 @@ def main(rank, world_size, args):
     input_size = (args.batchsize, im_dim, args.imagesize, args.imagesize)
     
     n_blocks=list(map(int, args.nblocks.split('-')))
-    stage = len(n_blocks)
+    n_epochs = list(map(int, args.nepochs.split('-')))
 
     model = MultiscaleFlow(
         input_size,
@@ -408,6 +408,7 @@ def main(rank, world_size, args):
         model.module.load_state_dict(checkpt["state_dict"])
         ema.set(checkpt['ema'])
         epoch = checkpt["epoch"]
+        stage = checkpt["stage"]
         
         val_time, test_bpd = validate(epoch, model, test_loader, ema, device, stage)
         mprint('checkpt: {0}| \tTime {1:.2f} | Test bits/dim {test_bpd:.4f}'.format(args.resume, val_time, test_bpd=test_bpd))
@@ -423,6 +424,10 @@ def main(rank, world_size, args):
     begin_epoch = 0
     begin_stage = 0
 
+    n_blocks = list(map(int, args.nblocks.split('-')))
+    n_epochs = list(map(int, args.nepochs.split('-')))
+    n_stages = len(n_blocks)
+
     most_recent_path = os.path.join(args.save, 'models', 'most_recent.pth')
     checkpt_exists = os.path.exists(most_recent_path)
     if checkpt_exists:
@@ -434,9 +439,11 @@ def main(rank, world_size, args):
             model(x)
 
         checkpt = torch.load(most_recent_path)
-        epoch = checkpt["epoch"]
-        stage = checkpt["stage"]
-        begin_epoch = stage * args.nepochs + epoch + 1
+        begin_epoch = checkpt["epoch"] + 1
+        begin_stage = checkpt["stage"]
+        if begin_epoch == n_epochs[begin_stage]:
+            begin_stage = begin_stage + 1
+            begin_epoch = 0
 
         model.module.load_state_dict(checkpt["state_dict"])
         ema.set(checkpt['ema'])
@@ -450,9 +457,11 @@ def main(rank, world_size, args):
             model(x)
 
         checkpt = torch.load(args.resume)
-        epoch = checkpt["epoch"]
-        stage = checkpt["stage"]
-        begin_epoch = stage * args.nepochs + epoch + 1
+        begin_epoch = checkpt["epoch"] + 1
+        begin_stage = checkpt["stage"]
+        if begin_epoch == n_epochs[begin_stage]:
+            begin_stage = begin_stage + 1
+            begin_epoch = 0
 
         model.module.load_state_dict(checkpt["state_dict"])
         ema.set(checkpt['ema'])
@@ -475,58 +484,63 @@ def main(rank, world_size, args):
         utils.makedirs(os.path.join(args.save, 'figs'))
         # visualize(model, fixed_x, fixed_z, os.path.join(args.save, 'figs', 'init.png'))
         
-    n_blocks=list(map(int, args.nblocks.split('-')))
-    for global_epoch in range(begin_epoch, len(n_blocks) * args.nepochs):
-        stage = int(global_epoch / args.nepochs)
-        epoch = global_epoch % args.nepochs
-        sampler.set_epoch(epoch)
-        flows.CG_ITERS_TRACER.clear()
-        flows.HESS_NORM_TRACER.clear()
-        mprint('Current LR {}'.format(optimizer.param_groups[0]['lr']))
-        train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_meter, hnorm_meter, batch_time, ema,
-                device, mprint, world_size, args, stage)
-        if not args.fast_training:
-            val_time, test_bpd = validate(epoch, model, test_loader, ema, device, stage)
-            mprint('Epoch: [{0}]\tTime {1:.2f} | Test bits/dim {test_bpd:.4f}'.format(epoch, val_time, test_bpd=test_bpd))
+    
+    
+    for stage in range(begin_stage, n_stages):
+        for epoch in range(begin_epoch, n_epochs[stage]):
+            
+            sampler.set_epoch(epoch)
+            flows.CG_ITERS_TRACER.clear()
+            flows.HESS_NORM_TRACER.clear()
+            mprint('Current LR {}'.format(optimizer.param_groups[0]['lr']))
+            train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_meter, hnorm_meter, batch_time, ema,
+                    device, mprint, world_size, args, stage)
 
-        if rank == 0:
-            utils.makedirs(os.path.join(args.save, 'figs'))
-            visualize(model, fixed_x, fixed_z, os.path.join(args.save, 'figs', f'{epoch}.png'))
+            if epoch + 1 == n_epochs[stage]:
+                begin_epoch = 0
 
-            utils.makedirs(os.path.join(args.save, "models"))
             if not args.fast_training:
-                if test_bpd < best_test_bpd:
-                    best_test_bpd = test_bpd
-                    torch.save({
-                        'epoch': epoch,
-                        'stage': stage,
-                        'state_dict': model.module.state_dict(),
-                        'opt_state_dict': optimizer.state_dict(),
-                        'args': args,
-                        'ema': ema,
-                        'test_bpd': test_bpd,
-                    }, os.path.join(args.save, 'models', 'best_model.pth'))
-            else:
-                if epoch%5==0:
-                    torch.save({
-                        'epoch': epoch,
-                        'stage': stage,
-                        'state_dict': model.module.state_dict(),
-                        'opt_state_dict': optimizer.state_dict(),
-                        'args': args,
-                        'ema': ema,
-                    }, os.path.join(args.save, 'models', 'model_{}_{}.pth'.format(stage, epoch)))
+                val_time, test_bpd = validate(epoch, model, test_loader, ema, device, stage)
+                mprint('Stage:[{0}] Epoch: [{1}]\tTime {2:.2f} | Test bits/dim {test_bpd:.4f}'.format(stage, epoch, val_time, test_bpd=test_bpd))
+
+            if rank == 0:
+                utils.makedirs(os.path.join(args.save, 'figs'))
+                visualize(model, fixed_x, fixed_z, os.path.join(args.save, 'figs', f'{epoch}.png'))
+
+                utils.makedirs(os.path.join(args.save, "models"))
+                if not args.fast_training:
+                    if test_bpd < best_test_bpd:
+                        best_test_bpd = test_bpd
+                        torch.save({
+                            'epoch': epoch,
+                            'stage': stage,
+                            'state_dict': model.module.state_dict(),
+                            'opt_state_dict': optimizer.state_dict(),
+                            'args': args,
+                            'ema': ema,
+                            'test_bpd': test_bpd,
+                        }, os.path.join(args.save, 'models', 'best_model.pth'))
+                else:
+                    if epoch%5==0:
+                        torch.save({
+                            'epoch': epoch,
+                            'stage': stage,
+                            'state_dict': model.module.state_dict(),
+                            'opt_state_dict': optimizer.state_dict(),
+                            'args': args,
+                            'ema': ema,
+                        }, os.path.join(args.save, 'models', 'model_{}_{}.pth'.format(stage, epoch)))
 
 
-        if rank == 0:
-            torch.save({
-                'epoch': epoch,
-                'stage': stage,
-                'state_dict': model.module.state_dict(),
-                'opt_state_dict': optimizer.state_dict(),
-                'args': args,
-                'ema': ema,
-            }, os.path.join(args.save, 'models', 'most_recent.pth'))
+            if rank == 0:
+                torch.save({
+                    'epoch': epoch,
+                    'stage': stage,
+                    'state_dict': model.module.state_dict(),
+                    'opt_state_dict': optimizer.state_dict(),
+                    'args': args,
+                    'ema': ema,
+                }, os.path.join(args.save, 'models', 'most_recent.pth'))
 
     cleanup()
 
@@ -552,7 +566,7 @@ if __name__ == "__main__":
     parser.add_argument("--icnn", type=int, choices=[1, 2, 3], default=1)
     parser.add_argument("--c2f", choices=["vanilla", "JKO"], default="vanilla")
 
-    parser.add_argument('--nepochs', help='Number of epochs for training', type=int, default=100)
+    parser.add_argument('--nepochs', type=str, default='30-30-40')
     parser.add_argument('--batchsize', help='Minibatch size', type=int, default=64)
     parser.add_argument('--lr', help='Learning rate', type=float, default=1e-3)
     parser.add_argument('--wd', help='Weight decay', type=float, default=1e-6)
