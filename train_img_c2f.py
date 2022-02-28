@@ -211,7 +211,7 @@ def train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_mete
         x = x.to(device)
 
         # with torch.autograd.detect_anomaly():
-        bpd = compute_loss(x, model, stage)
+        bpd = compute_loss(x, model, stage) # mean of nll
         bpd_meter.update(bpd.item())
 
         loss = bpd
