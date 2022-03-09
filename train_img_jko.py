@@ -136,8 +136,20 @@ def compute_loss(x, model, stage):
     # log p(x)
     logpx = logpz + logdet - np.log(nvals) * ndims
     bits_per_dim = -torch.mean(logpx) / ndims / np.log(2)
+    
+    loss = bits_per_dim
+    
+    if stage > 0:
+        # TODO
+        push_x
+       
+        w_loss = ((push_x - x) ** 2).mean()
+        targ_loss = bits_per_dim
+        neg_loss = torch.mean(logdet)
+        
+        loss = w_loss + args.step_size * (neg_loss - targ_loss)
 
-    return bits_per_dim
+    return loss
 
 
 # noinspection PyUnusedLocal
