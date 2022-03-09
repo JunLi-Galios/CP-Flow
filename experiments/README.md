@@ -1,5 +1,5 @@
 Experiment Results
-###
+##
 cifar10
 baseline 3.40
 
@@ -37,7 +37,7 @@ python train_img.py --data cifar10 --lr 1e-4 --ngpu 4 --num_hidden_layers 4
 6.0595
 
 
-###
+##
 minst
 
 ##
