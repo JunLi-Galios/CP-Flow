@@ -117,9 +117,9 @@ def cpflow_block_fn(index, input_shape, fc, block_type, dimh, num_hidden_layers,
 
 
 # noinspection PyShadowingNames
-def update_lr(optimizer, itr, args):
+def update_lr(optimizer, itr, lr):
     iter_frac = min(float(itr + 1) / max(args.warmup_iters, 1), 1.0)
-    lr = args.lr * iter_frac * args.ngpus
+    lr = lr * iter_frac * args.ngpus
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
 
@@ -194,14 +194,14 @@ def visualize(model, x, fixed_z, savepath):
 
 # noinspection PyUnusedLocal,PyShadowingNames
 def train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_meter, hnorm_meter, batch_time, ema, device,
-          mprint, world_size, args, stage):
+          mprint, world_size, args, stage, lr):
     model.train()
 
     end = time.time()
     for i, (x, y) in enumerate(train_loader):
 
         global_itr = epoch * len(train_loader) + i
-        update_lr(optimizer, global_itr, args)
+        update_lr(optimizer, global_itr, lr)
 
         # Training procedure:
         # for each sample x:
@@ -426,6 +426,7 @@ def main(rank, world_size, args):
 
     n_blocks = list(map(int, args.nblocks.split('-')))
     n_epochs = list(map(int, args.nepochs.split('-')))
+    lrs = list(map(int, args.lrs.split(',')))
     n_stages = len(n_blocks)
 
     most_recent_path = os.path.join(args.save, 'models', 'most_recent.pth')
@@ -494,7 +495,7 @@ def main(rank, world_size, args):
             flows.HESS_NORM_TRACER.clear()
             mprint('Current LR {}'.format(optimizer.param_groups[0]['lr']))
             train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_meter, hnorm_meter, batch_time, ema,
-                    device, mprint, world_size, args, stage)
+                    device, mprint, world_size, args, stage, lr)
 
             if epoch + 1 == n_epochs[stage]:
                 begin_epoch = 0
@@ -564,11 +565,10 @@ if __name__ == "__main__":
     parser.add_argument('--num_hidden_layers', type=int, default=3)
     parser.add_argument('--num_pooling', type=int, default=0)
     parser.add_argument("--icnn", type=int, choices=[1, 2, 3], default=1)
-    parser.add_argument("--c2f", choices=["vanilla", "JKO"], default="vanilla")
 
     parser.add_argument('--nepochs', type=str, default='30-30-40')
+    parser.add_argument('--lrs', type=str, default='1e-3,1e-3,1e-3')
     parser.add_argument('--batchsize', help='Minibatch size', type=int, default=64)
-    parser.add_argument('--lr', help='Learning rate', type=float, default=1e-3)
     parser.add_argument('--wd', help='Weight decay', type=float, default=1e-6)
     parser.add_argument('--warmup_iters', type=int, default=0)
     parser.add_argument('--save', help='directory to save results', type=str, default='test')
