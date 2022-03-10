@@ -130,7 +130,7 @@ def compute_loss(x, model, stage):
     
     if stage == 0:
 
-        z, logdet = model(x, 0, stage)
+        z, multi_scale_z, logdet = model(x, 0, stage)
 
         # log p(z)
         logpz = standard_normal_logprob(z).view(z.size(0), -1).sum(1)
@@ -143,7 +143,7 @@ def compute_loss(x, model, stage):
     
     else:
         # TODO
-        z, logdet = model(x, 0, stage)
+        z, multi_scale_z, logdet = model(x, 0, stage)
         z_ = 
         push_x
        
