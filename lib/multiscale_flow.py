@@ -74,10 +74,16 @@ class MultiscaleFlow(nn.Module):
         if reverse:
             return self.reverse(x, logdet, **kwargs)
         out = []
+        
+        multi_scale_out = []
+        
+        multi_scale_out.append(x)
         for idx in range(len(self.transforms)):
             if idx > stage:
                 break
+            
             x, logdet = self.transforms[idx].forward_transform(x, logdet)
+            multi_scale_out.append(x)
 
             if self.factor_out and (idx < len(self.transforms) - 1):
                 d = x.size(1) // 2
@@ -86,7 +92,7 @@ class MultiscaleFlow(nn.Module):
 
         out.append(x)
         out = torch.cat([o.view(o.size()[0], -1) for o in out], 1)
-        return out, logdet
+        return out, multi_scale_out, logdet
 
     def reverse(self, z, logpz=None, **kwargs):
         if self.factor_out:
