@@ -127,20 +127,24 @@ def update_lr(optimizer, itr, lr):
 def compute_loss(x, model, stage):
     ndims = np.prod(x.shape[1:])
     nvals = 256  # for MNIST and CIFAR-10.
-
-    z, logdet = model(x, 0, stage)
-
-    # log p(z)
-    logpz = standard_normal_logprob(z).view(z.size(0), -1).sum(1)
-
-    # log p(x)
-    logpx = logpz + logdet - np.log(nvals) * ndims
-    bits_per_dim = -torch.mean(logpx) / ndims / np.log(2)
     
-    loss = bits_per_dim
+    if stage == 0:
+
+        z, logdet = model(x, 0, stage)
+
+        # log p(z)
+        logpz = standard_normal_logprob(z).view(z.size(0), -1).sum(1)
+
+        # log p(x)
+        logpx = logpz + logdet - np.log(nvals) * ndims
+        bits_per_dim = -torch.mean(logpx) / ndims / np.log(2)
+
+        loss = bits_per_dim
     
-    if stage > 0:
+    else:
         # TODO
+        z, logdet = model(x, 0, stage)
+        z_ = 
         push_x
        
         w_loss = ((push_x - x) ** 2).mean()
