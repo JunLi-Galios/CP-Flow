@@ -36,6 +36,12 @@ python train_img.py --data cifar10 --lr 1e-4 --ngpu 4 --num_hidden_layers 4
 
 6.0595
 
+##
+python train_img.py --data cifar10 --lr 1e-4 --ngpu 4 --num_hidden_layers 4 
+--nblocks 2-2-2-2 --glow False --icnn 3  --save cifar10_baseline6
+
+6.0595
+
 
 ##
 minst
@@ -83,6 +89,9 @@ python train_img.py --data mnist --lr 1e-2 --ngpu 4 --num_hidden_layers 4
 
 3.8558
 
+##
+python train_img.py --data mnist --lr 1e-5 --ngpu 4 --num_hidden_layers 4 --nblocks 8-8-8 --glow False --icnn 2  --save mnist_baseline8 --batchsize 32
 
+2.1553
 
 
