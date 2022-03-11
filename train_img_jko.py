@@ -128,32 +128,16 @@ def compute_loss(x, model, stage):
     ndims = np.prod(x.shape[1:])
     nvals = 256  # for MNIST and CIFAR-10.
     
-    if stage == 0:
+    z, multi_scale_z, logdet = model(x, 0, stage)
 
-        z, multi_scale_z, logdet = model(x, 0, stage)
+    # log p(z)
+    logpz = standard_normal_logprob(z).view(z.size(0), -1).sum(1)
 
-        # log p(z)
-        logpz = standard_normal_logprob(z).view(z.size(0), -1).sum(1)
+    # log p(x)
+    logpx = logpz + logdet - np.log(nvals) * ndims
+    bits_per_dim = -torch.mean(logpx) / ndims / np.log(2)
 
-        # log p(x)
-        logpx = logpz + logdet - np.log(nvals) * ndims
-        bits_per_dim = -torch.mean(logpx) / ndims / np.log(2)
-
-        loss = bits_per_dim
-    
-    else:
-        # TODO
-        z, multi_scale_z, logdet = model(x, 0, stage)
-        z_ = 
-        push_x
-       
-        w_loss = ((push_x - x) ** 2).mean()
-        targ_loss = bits_per_dim
-        neg_loss = torch.mean(logdet)
-        
-        loss = w_loss + args.step_size * (neg_loss - targ_loss)
-
-    return loss
+    return bits_per_dim
 
 
 # noinspection PyUnusedLocal
@@ -209,9 +193,11 @@ def visualize(model, x, fixed_z, savepath):
 
 
 # noinspection PyUnusedLocal,PyShadowingNames
-def train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_meter, hnorm_meter, batch_time, ema, device,
+def train(epoch, train_loader, diffusion_model, optimizer, bpd_meter, gnorm_meter, cg_meter, hnorm_meter, batch_time, ema, device,
           mprint, world_size, args, stage, lr):
+    model = diffusion_model[stage]
     model.train()
+    
 
     end = time.time()
     for i, (x, y) in enumerate(train_loader):
@@ -231,6 +217,17 @@ def train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_mete
         bpd_meter.update(bpd.item())
 
         loss = bpd
+        
+        if stage > 0:
+            last_model = diffusion_model[stage - 1]
+            last_model.train()
+            _, multi_scale_z, logdet = model(x, 0, stage)
+            _, multi_scale_z_last, logdet0 = last_model(x, 0, stage - 1)
+            loss += logdet.mean()
+            for j in range(stage - 1):
+                z_last = multi_scale_z_last[j].detach()
+                z = multi_scale_z[j]
+                loss += ((z_last - z)**2)
         loss.backward()
 
         grad_norm = torch.nn.utils.clip_grad.clip_grad_norm_(model.parameters(), 1.)
@@ -294,6 +291,39 @@ def validate(epoch, model, data_loader, ema, device, stage):
         ema.swap()
 
     return val_time, bpd_meter.avg
+
+def load(diffusion_model, file_name):
+    mprint(f"Resuming from {file_name}")
+    # deal with data-dependent initialization like actnorm.
+    with torch.no_grad():
+        x = torch.rand(8, *input_size[1:]).to(device)
+        for i in range(len(diffusion_model)):
+            diffusion_model[i](x)
+
+    checkpt = torch.load(file_name)
+    begin_epoch = checkpt["epoch"] + 1
+    begin_stage = checkpt["stage"]
+    if begin_epoch == n_epochs[begin_stage]:
+        begin_stage = begin_stage + 1
+        begin_epoch = 0
+        
+    for i in range(len(diffusion_model)):
+        diffusion_model[i].module.load_state_dict(checkpt["state_dict_{}".format(i)])
+        ema_list.set(checkpt['ema_{}'.format(i)])
+
+    optimizer.load_state_dict(checkpt["opt_state_dict"])
+
+def save(epoch, stage, diffusion_model, ema_list, optimizer, test_bpd, file_name):
+    state_dict = {'state_dict_{}'.format{i}:diffusion_model[i].module.state_dict() for i in len(n_blocks)}
+    ema_dict = {'ema_{}'.format{i}:ema_list[i] for i in len(n_blocks)}
+    save_dict = {
+        'epoch': epoch,
+        'stage': stage,                            
+        'opt_state_dict': optimizer.state_dict(),
+        'args': args,
+        'test_bpd': test_bpd,}
+    save_dict.update(state_dict).update(ema_dict)
+    torch.save(save_dict, os.path.join(args.save, 'models', '{}.pth'.format(file_name)))
 
 
 # noinspection PyShadowingNames
@@ -394,26 +424,35 @@ def main(rank, world_size, args):
     
     n_blocks=list(map(int, args.nblocks.split('-')))
     n_epochs = list(map(int, args.nepochs.split('-')))
+    
+    diffusion_model = []
+    ema_list = []
+    
+    for i in len(n_blocks):
+        model = MultiscaleFlow(
+            input_size,
+            block_fn=partial(cpflow_block_fn, block_type=args.block_type, dimh=args.dimh,
+                             num_hidden_layers=args.num_hidden_layers, icnn_version=args.icnn,
+                             num_pooling=args.num_pooling),
+            n_blocks=n_blocks[0:i],
+            factor_out=args.factor_out,
+            init_layer=init_layer,
+            actnorm=args.actnorm,
+            fc_end=args.fc_end,
+            glow=args.glow,
+        )
+        model.to(device)
 
-    model = MultiscaleFlow(
-        input_size,
-        block_fn=partial(cpflow_block_fn, block_type=args.block_type, dimh=args.dimh,
-                         num_hidden_layers=args.num_hidden_layers, icnn_version=args.icnn,
-                         num_pooling=args.num_pooling),
-        n_blocks=list(map(int, args.nblocks.split('-'))),
-        factor_out=args.factor_out,
-        init_layer=init_layer,
-        actnorm=args.actnorm,
-        fc_end=args.fc_end,
-        glow=args.glow,
-    )
-    model.to(device)
+        model = DDP(model, device_ids=[rank], find_unused_parameters=True)
+        ema = utils.ExponentialMovingAverage(model)
+        
+        diffusion_model.append(model)
+        ema_list.append(ema)
 
-    model = DDP(model, device_ids=[rank], find_unused_parameters=True)
-    ema = utils.ExponentialMovingAverage(model)
-
-    mprint(model)
-    mprint('EMA: {}'.format(ema))
+        mprint(model)
+        mprint('EMA: {}'.format(ema))
+    
+   
     
     if args.test:
         if args.resume == "":
@@ -448,41 +487,9 @@ def main(rank, world_size, args):
     most_recent_path = os.path.join(args.save, 'models', 'most_recent.pth')
     checkpt_exists = os.path.exists(most_recent_path)
     if checkpt_exists:
-        mprint(f"Resuming from {most_recent_path}")
-
-        # deal with data-dependent initialization like actnorm.
-        with torch.no_grad():
-            x = torch.rand(8, *input_size[1:]).to(device)
-            model(x)
-
-        checkpt = torch.load(most_recent_path)
-        begin_epoch = checkpt["epoch"] + 1
-        begin_stage = checkpt["stage"]
-        if begin_epoch == n_epochs[begin_stage]:
-            begin_stage = begin_stage + 1
-            begin_epoch = 0
-
-        model.module.load_state_dict(checkpt["state_dict"])
-        ema.set(checkpt['ema'])
-        optimizer.load_state_dict(checkpt["opt_state_dict"])
+        load(diffusion_model, most_recent_path)
     elif args.resume:
-        mprint(f"Resuming from {args.resume}")
-
-        # deal with data-dependent initialization like actnorm.
-        with torch.no_grad():
-            x = torch.rand(8, *input_size[1:]).to(device)
-            model(x)
-
-        checkpt = torch.load(args.resume)
-        begin_epoch = checkpt["epoch"] + 1
-        begin_stage = checkpt["stage"]
-        if begin_epoch == n_epochs[begin_stage]:
-            begin_stage = begin_stage + 1
-            begin_epoch = 0
-
-        model.module.load_state_dict(checkpt["state_dict"])
-        ema.set(checkpt['ema'])
-        optimizer.load_state_dict(checkpt["opt_state_dict"])
+        load(diffusion_model, args.resume)
 
     mprint(optimizer)
 
@@ -504,13 +511,18 @@ def main(rank, world_size, args):
     
     
     for stage in range(begin_stage, n_stages):
+        if stage > 0:
+            model = diffusion_model[stage]
+            last_model = diffusion_model[stage - 1]
+            for i in range(stage - 1):
+                model.module.transforms[i].load_state_dict(last_model.module.transforms[i].state_dict())
         for epoch in range(begin_epoch, n_epochs[stage]):
             
             sampler.set_epoch(epoch)
             flows.CG_ITERS_TRACER.clear()
             flows.HESS_NORM_TRACER.clear()
             mprint('Current LR {}'.format(optimizer.param_groups[0]['lr']))
-            train(epoch, train_loader, model, optimizer, bpd_meter, gnorm_meter, cg_meter, hnorm_meter, batch_time, ema,
+            train(epoch, train_loader, diffusion_model, optimizer, bpd_meter, gnorm_meter, cg_meter, hnorm_meter, batch_time, ema,
                     device, mprint, world_size, args, stage, lr)
 
             if epoch + 1 == n_epochs[stage]:
@@ -528,36 +540,13 @@ def main(rank, world_size, args):
                 if not args.fast_training:
                     if test_bpd < best_test_bpd:
                         best_test_bpd = test_bpd
-                        torch.save({
-                            'epoch': epoch,
-                            'stage': stage,
-                            'state_dict': model.module.state_dict(),
-                            'opt_state_dict': optimizer.state_dict(),
-                            'args': args,
-                            'ema': ema,
-                            'test_bpd': test_bpd,
-                        }, os.path.join(args.save, 'models', 'best_model.pth'))
+                        save(epoch, stage, diffusion_model, ema_list, optimizer, test_bpd, 'best_model')                        
                 else:
                     if epoch%5==0:
-                        torch.save({
-                            'epoch': epoch,
-                            'stage': stage,
-                            'state_dict': model.module.state_dict(),
-                            'opt_state_dict': optimizer.state_dict(),
-                            'args': args,
-                            'ema': ema,
-                        }, os.path.join(args.save, 'models', 'model_{}_{}.pth'.format(stage, epoch)))
-
+                        save(epoch, stage, diffusion_model, ema_list, optimizer, test_bpd, 'model_{}_{}'.format(stage, epoch))
 
             if rank == 0:
-                torch.save({
-                    'epoch': epoch,
-                    'stage': stage,
-                    'state_dict': model.module.state_dict(),
-                    'opt_state_dict': optimizer.state_dict(),
-                    'args': args,
-                    'ema': ema,
-                }, os.path.join(args.save, 'models', 'most_recent.pth'))
+                save(epoch, stage, diffusion_model, ema_list, optimizer, test_bpd, most_recent)
 
     cleanup()
 
