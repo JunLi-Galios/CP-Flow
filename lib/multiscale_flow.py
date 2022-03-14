@@ -50,6 +50,8 @@ class MultiscaleFlow(nn.Module):
                     fc_end=self.fc_end,
                     glow=self.glow,
                 )
+                if i < self.n_scale - 1:
+                    transforms.append(SqueezeLayer(2))
             )
             c, h, w = c * 2 if self.factor_out else c * 4, h // 2, w // 2
         return nn.ModuleList(transforms)
@@ -71,6 +73,7 @@ class MultiscaleFlow(nn.Module):
         return tuple(output_sizes)
 
     def forward(self, x, logdet=0, stage=3, reverse=False, **kwargs):
+        print('input x', x.size())
         if reverse:
             return self.reverse(x, logdet, **kwargs)
         out = []
@@ -78,12 +81,16 @@ class MultiscaleFlow(nn.Module):
         multi_scale_out = []
         
         multi_scale_out.append(x)
-        for idx in range(len(self.transforms)):
+        for idx in range(int(len(self.transforms)/2)+1):
             if idx > stage:
                 break
             
-            x, logdet = self.transforms[idx].forward_transform(x, logdet)
-            multi_scale_out.append(x)
+            x, logdet = self.transforms[2 * idx].forward_transform(x, logdet)
+            print('before multi_scale_out', x.size())
+            if idx < self.n_scale - 1:
+                x = self.transforms[2 * idx + 1]
+                print('multi_scale_out', x.size())
+                multi_scale_out.append(x)
 
             if self.factor_out and (idx < len(self.transforms) - 1):
                 d = x.size(1) // 2
@@ -167,7 +174,6 @@ class StackedInvBlocks(SequentialFlow):
                 if actnorm:
                     chain.append(_actnorm(initial_size, fc=False))
                 chain.append(block_fn(i, initial_size, fc=False))
-            chain.append(SqueezeLayer(2))
         else:
             for i in range(n_blocks):
                 if glow:
