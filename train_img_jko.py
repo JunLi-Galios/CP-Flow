@@ -117,7 +117,7 @@ def cpflow_block_fn(index, input_shape, fc, block_type, dimh, num_hidden_layers,
 
 
 # noinspection PyShadowingNames
-def update_lr(optimizer, itr, lr):
+def update_lr(optimizer, itr, lr, args):
     iter_frac = min(float(itr + 1) / max(args.warmup_iters, 1), 1.0)
     lr = lr * iter_frac * args.ngpus
     for param_group in optimizer.param_groups:
@@ -203,7 +203,7 @@ def train(epoch, train_loader, diffusion_model, optimizer, bpd_meter, gnorm_mete
     for i, (x, y) in enumerate(train_loader):
 
         global_itr = epoch * len(train_loader) + i
-        update_lr(optimizer, global_itr, lr)
+        update_lr(optimizer, global_itr, lr, args)
 
         # Training procedure:
         # for each sample x:
@@ -314,8 +314,8 @@ def load(diffusion_model, file_name):
     optimizer.load_state_dict(checkpt["opt_state_dict"])
 
 def save(epoch, stage, diffusion_model, ema_list, optimizer, test_bpd, file_name):
-    state_dict = {'state_dict_{}'.format{i}:diffusion_model[i].module.state_dict() for i in len(n_blocks)}
-    ema_dict = {'ema_{}'.format{i}:ema_list[i] for i in len(n_blocks)}
+    state_dict = {f'state_dict_{i}':diffusion_model[i].module.state_dict() for i in range(len(diffusion_model))}
+    ema_dict = {f'ema_{i}':ema_list[i] for i in len(ema_list)}
     save_dict = {
         'epoch': epoch,
         'stage': stage,                            
@@ -422,26 +422,28 @@ def main(rank, world_size, args):
 
     input_size = (args.batchsize, im_dim, args.imagesize, args.imagesize)
     
-    n_blocks=list(map(int, args.nblocks.split('-')))
+    n_blocks = list(map(int, args.nblocks.split('-')))
     n_epochs = list(map(int, args.nepochs.split('-')))
+    lrs = list(map(float, args.lrs.split(',')))
+    assert len(n_blocks)==len(n_epochs)
+    assert len(n_blocks)==len(lrs)
     
     diffusion_model = []
     ema_list = []
     
-    for i in len(n_blocks):
+    for i in range(len(n_blocks)):
         model = MultiscaleFlow(
             input_size,
             block_fn=partial(cpflow_block_fn, block_type=args.block_type, dimh=args.dimh,
                              num_hidden_layers=args.num_hidden_layers, icnn_version=args.icnn,
                              num_pooling=args.num_pooling),
-            n_blocks=n_blocks[0:i],
+            n_blocks=n_blocks[0:i+1],
             factor_out=args.factor_out,
             init_layer=init_layer,
             actnorm=args.actnorm,
             fc_end=args.fc_end,
             glow=args.glow,
-        )
-        model.to(device)
+        ).to(device)
 
         model = DDP(model, device_ids=[rank], find_unused_parameters=True)
         ema = utils.ExponentialMovingAverage(model)
@@ -449,10 +451,8 @@ def main(rank, world_size, args):
         diffusion_model.append(model)
         ema_list.append(ema)
 
-        mprint(model)
+        mprint(f'{i}th model', model)
         mprint('EMA: {}'.format(ema))
-    
-   
     
     if args.test:
         if args.resume == "":
@@ -472,16 +472,11 @@ def main(rank, world_size, args):
         return
     
 
-    optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.99), weight_decay=args.wd)
-
     # Saving and resuming
     best_test_bpd = math.inf
     begin_epoch = 0
     begin_stage = 0
 
-    n_blocks = list(map(int, args.nblocks.split('-')))
-    n_epochs = list(map(int, args.nepochs.split('-')))
-    lrs = list(map(int, args.lrs.split(',')))
     n_stages = len(n_blocks)
 
     most_recent_path = os.path.join(args.save, 'models', 'most_recent.pth')
@@ -491,7 +486,7 @@ def main(rank, world_size, args):
     elif args.resume:
         load(diffusion_model, args.resume)
 
-    mprint(optimizer)
+   
 
     batch_time = utils.RunningAverageMeter(0.97)
     bpd_meter = utils.RunningAverageMeter(0.97)
@@ -499,7 +494,6 @@ def main(rank, world_size, args):
     cg_meter = utils.RunningAverageMeter(0.97)
     hnorm_meter = utils.RunningAverageMeter(0.97)
 
-    update_lr(optimizer, 0, args)
 
     # for visualization
     fixed_x = next(iter(train_loader))[0][:8].to(device)
@@ -516,6 +510,9 @@ def main(rank, world_size, args):
             last_model = diffusion_model[stage - 1]
             for i in range(stage - 1):
                 model.module.transforms[i].load_state_dict(last_model.module.transforms[i].state_dict())
+
+        optimizer = optim.Adam(diffusion_model[stage].parameters(), lr=lrs[stage], betas=(0.9, 0.99), weight_decay=args.wd)
+        update_lr(optimizer, 0, lrs[stage], args)
         for epoch in range(begin_epoch, n_epochs[stage]):
             
             sampler.set_epoch(epoch)
@@ -523,7 +520,7 @@ def main(rank, world_size, args):
             flows.HESS_NORM_TRACER.clear()
             mprint('Current LR {}'.format(optimizer.param_groups[0]['lr']))
             train(epoch, train_loader, diffusion_model, optimizer, bpd_meter, gnorm_meter, cg_meter, hnorm_meter, batch_time, ema,
-                    device, mprint, world_size, args, stage, lr)
+                    device, mprint, world_size, args, stage, lrs[stage])
 
             if epoch + 1 == n_epochs[stage]:
                 begin_epoch = 0
@@ -534,7 +531,7 @@ def main(rank, world_size, args):
 
             if rank == 0:
                 utils.makedirs(os.path.join(args.save, 'figs'))
-                visualize(model, fixed_x, fixed_z, os.path.join(args.save, 'figs', f'{epoch}.png'))
+                #visualize(model, fixed_x, fixed_z, os.path.join(args.save, 'figs', f'{epoch}.png'))
 
                 utils.makedirs(os.path.join(args.save, "models"))
                 if not args.fast_training:
@@ -543,7 +540,7 @@ def main(rank, world_size, args):
                         save(epoch, stage, diffusion_model, ema_list, optimizer, test_bpd, 'best_model')                        
                 else:
                     if epoch%5==0:
-                        save(epoch, stage, diffusion_model, ema_list, optimizer, test_bpd, 'model_{}_{}'.format(stage, epoch))
+                        save(epoch, stage, diffusion_model, ema_list, optimizer, 0, 'model_{}_{}'.format(stage, epoch))
 
             if rank == 0:
                 save(epoch, stage, diffusion_model, ema_list, optimizer, test_bpd, most_recent)
