@@ -49,10 +49,9 @@ class MultiscaleFlow(nn.Module):
                     actnorm=self.actnorm,
                     fc_end=self.fc_end,
                     glow=self.glow,
-                )
-                if i < self.n_scale - 1:
-                    transforms.append(SqueezeLayer(2))
-            )
+                ))
+            if i < self.n_scale - 1:
+                transforms.append(SqueezeLayer(2))
             c, h, w = c * 2 if self.factor_out else c * 4, h // 2, w // 2
         return nn.ModuleList(transforms)
 
